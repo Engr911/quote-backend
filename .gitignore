@@ -1,0 +1,13 @@
+# Never upload secrets
+.env
+
+# Never upload installed packages (they get reinstalled from package.json instead)
+node_modules/
+
+# Uploaded files stay local (in production, these live in cloud storage instead)
+uploads/*
+!uploads/.gitkeep
+
+# OS-generated files
+.DS_Store
+Thumbs.db

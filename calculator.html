@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Custom Sticker Quote Calculator</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f4f4f4;
+    margin: 0;
+    padding: 40px 20px;
+  }
+  .calculator {
+    max-width: 480px;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 12px;
+    padding: 32px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  }
+  h1 {
+    font-size: 1.4rem;
+    margin: 0 0 24px;
+    text-align: center;
+  }
+  label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin: 16px 0 6px;
+    color: #333;
+  }
+  select, input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 0.95rem;
+  }
+  .row {
+    display: flex;
+    gap: 12px;
+  }
+  .row > div {
+    flex: 1;
+  }
+  button {
+    width: 100%;
+    margin-top: 24px;
+    padding: 14px;
+    background: #000;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled {
+    background: #999;
+    cursor: not-allowed;
+  }
+  .result {
+    margin-top: 20px;
+    padding: 16px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    display: none;
+  }
+  .result.success {
+    background: #e8f5e9;
+    color: #1b5e20;
+    display: block;
+  }
+  .result.error {
+    background: #ffebee;
+    color: #b71c1c;
+    display: block;
+  }
+  .result a {
+    color: inherit;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<div class="calculator">
+  <h1>Get a Custom Sticker Quote</h1>
+
+  <label for="material">Material</label>
+  <select id="material">
+    <option value="Vinyl">Vinyl</option>
+    <option value="Paper">Paper</option>
+    <option value="Holographic">Holographic</option>
+  </select>
+
+  <label for="finish">Finish</label>
+  <select id="finish">
+    <option value="None">None</option>
+    <option value="Gloss">Gloss</option>
+    <option value="Matte">Matte</option>
+  </select>
+
+  <div class="row">
+    <div>
+      <label for="width">Width (cm)</label>
+      <input type="number" id="width" value="10" min="1">
+    </div>
+    <div>
+      <label for="height">Height (cm)</label>
+      <input type="number" id="height" value="5" min="1">
+    </div>
+  </div>
+
+  <label for="quantity">Quantity</label>
+  <input type="number" id="quantity" value="100" min="1">
+
+  <label for="artwork">Upload Artwork (optional)</label>
+  <input type="file" id="artwork" accept="image/*,application/pdf">
+
+  <button id="submitBtn">Get Quote & Create Order</button>
+
+  <div class="result" id="result"></div>
+</div>
+
+<script>
+  // Change this to your live backend URL once deployed.
+  // For now, it points to your local server.
+  const BACKEND_URL = 'http://localhost:3000';
+
+  const submitBtn = document.getElementById('submitBtn');
+  const resultBox = document.getElementById('result');
+
+  submitBtn.addEventListener('click', async function () {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Processing...';
+    resultBox.className = 'result';
+    resultBox.textContent = '';
+
+    try {
+      const material = document.getElementById('material').value;
+      const finish = document.getElementById('finish').value;
+      const width = Number(document.getElementById('width').value);
+      const height = Number(document.getElementById('height').value);
+      const quantity = Number(document.getElementById('quantity').value);
+      const fileInput = document.getElementById('artwork');
+
+      let fileUrl = null;
+
+      // Step 1: if a file was chosen, upload it first and get its URL
+      if (fileInput.files.length > 0) {
+        const formData = new FormData();
+        formData.append('artwork', fileInput.files[0]);
+
+        const uploadResponse = await fetch(`${BACKEND_URL}/api/upload`, {
+          method: 'POST',
+          body: formData
+        });
+
+        const uploadResult = await uploadResponse.json();
+
+        if (!uploadResponse.ok) {
+          throw new Error(uploadResult.message || 'File upload failed.');
+        }
+
+        fileUrl = uploadResult.fileUrl;
+      }
+
+      // Step 2: submit the quote (with the fileUrl attached, if any)
+      const quoteResponse = await fetch(`${BACKEND_URL}/api/quote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: [
+            { material, finish, width, height, quantity, fileUrl }
+          ]
+        })
+      });
+
+      const quoteResult = await quoteResponse.json();
+
+      if (!quoteResponse.ok) {
+        throw new Error(quoteResult.message || 'Could not create quote.');
+      }
+
+      const item = quoteResult.items[0];
+
+      resultBox.className = 'result success';
+      resultBox.innerHTML = `
+        <strong>Quote created!</strong><br>
+        Price: $${item.pricing.pricePerUnit} per unit<br>
+        Total: $${item.pricing.totalPrice}<br>
+        Order: ${quoteResult.draftOrder.name}<br>
+        <a href="${quoteResult.draftOrder.invoice_url}" target="_blank">View / Pay Invoice</a>
+      `;
+    } catch (err) {
+      resultBox.className = 'result error';
+      resultBox.textContent = 'Error: ' + err.message;
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Get Quote & Create Order';
+    }
+  });
+</script>
+
+</body>
+</html>
