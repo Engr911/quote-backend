@@ -8,19 +8,37 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 
 const app = express();
 
+// Shopify credentials, loaded securely from .env (never hardcoded here)
+const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
+const SHOPIFY_ADMIN_API_TOKEN = process.env.SHOPIFY_ADMIN_API_TOKEN;
+const SHOPIFY_API_VERSION = '2024-10'; // Shopify updates this quarterly
+
+// Automatically create the uploads folder if it doesn't exist yet.
+// This means we never depend on manually creating an empty folder
+// before deploying — the server creates it itself on startup.
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log('Created uploads directory.');
+}
+
+// Allows our future calculator (on a different domain) to talk to this server
+app.use(cors());
+
+// Allows the server to understand JSON data sent to it (like calculator form data)
+app.use(express.json());
+
 // ---- FILE UPLOAD SETUP ----
 
-// Configure where and how uploaded files are saved
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, 'uploads/'); // saved into the /uploads folder
+    cb(null, 'uploads/');
   },
   filename: function (req, file, cb) {
-    // Generate a unique name so files never overwrite each other,
-    // even if two customers upload files with the same original name
     const uniqueId = crypto.randomUUID();
     const extension = path.extname(file.originalname);
     cb(null, `${uniqueId}${extension}`);
@@ -35,17 +53,6 @@ const upload = multer({
 // Let the browser access uploaded files via a URL (e.g. /uploads/filename.png)
 app.use('/uploads', express.static('uploads'));
 
-// Shopify credentials, loaded securely from .env (never hardcoded here)
-const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
-const SHOPIFY_ADMIN_API_TOKEN = process.env.SHOPIFY_ADMIN_API_TOKEN;
-const SHOPIFY_API_VERSION = '2024-10'; // Shopify updates this quarterly
-
-// Allows our future calculator (on a different domain) to talk to this server
-app.use(cors());
-
-// Allows the server to understand JSON data sent to it (like calculator form data)
-app.use(express.json());
-
 // A simple test route — visiting this in a browser confirms the server is alive
 app.get('/', (req, res) => {
   res.send('Quote backend is running.');
@@ -53,17 +60,15 @@ app.get('/', (req, res) => {
 
 // ---- PRICING LOGIC (server-side, cannot be tampered with by the customer) ----
 
-// Base price per square cm, depending on material
 const MATERIAL_RATES = {
   Vinyl: 0.05,
   Paper: 0.03,
   Holographic: 0.08
 };
 
-// Finishing options add a percentage on top of the base price
 const FINISHING_SURCHARGE = {
-  Gloss: 0.10,   // +10%
-  Matte: 0.05,   // +5%
+  Gloss: 0.10,
+  Matte: 0.05,
   None: 0
 };
 
@@ -76,11 +81,9 @@ function calculatePrice({ material, width, height, quantity, finish }) {
   const area = width * height; // cm²
   let pricePerUnit = area * rate;
 
-  // Apply finishing surcharge
   const surcharge = FINISHING_SURCHARGE[finish] || 0;
   pricePerUnit = pricePerUnit + (pricePerUnit * surcharge);
 
-  // Quantity discount tiers (more ordered = cheaper per unit)
   let discount = 0;
   if (quantity >= 500) discount = 0.20;
   else if (quantity >= 200) discount = 0.10;
@@ -100,13 +103,10 @@ function calculatePrice({ material, width, height, quantity, finish }) {
 
 // ---- SHOPIFY INTEGRATION ----
 
-// Builds ONE line item object from a single configured product.
-// Kept separate so we can safely reuse it for multiple items in one order
-// without any data leaking between them.
 function buildLineItem(item, pricing) {
   return {
     title: `Custom Sticker - ${item.material} (${item.width}x${item.height}cm)`,
-    price: pricing.pricePerUnit.toFixed(2), // server-calculated, never trusted from browser
+    price: pricing.pricePerUnit.toFixed(2),
     quantity: item.quantity,
     properties: [
       { name: 'Material', value: item.material },
@@ -151,13 +151,11 @@ async function createShopifyDraftOrder(lineItems, noteLines) {
 
 // ---- FILE UPLOAD ENDPOINT ----
 
-// 'artwork' must match the field name the calculator uses when sending the file
 app.post('/api/upload', upload.single('artwork'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'No file was uploaded.' });
   }
 
-  // Build the full URL where this file can now be accessed
   const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
 
   console.log('File uploaded:', req.file.filename);
@@ -170,9 +168,9 @@ app.post('/api/upload', upload.single('artwork'), (req, res) => {
   });
 });
 
+// ---- THE QUOTE ENDPOINT ----
+
 app.post('/api/quote', async (req, res) => {
-  // The request body now looks like: { items: [ {...}, {...}, {...} ] }
-  // Each object in the array is one custom product configuration.
   const items = req.body.items;
 
   console.log('Received order data:', items);
@@ -188,10 +186,7 @@ app.post('/api/quote', async (req, res) => {
     const noteLines = ['Custom quote order — multiple items:'];
     const pricedItems = [];
 
-    // Process each item completely independently —
-    // this is what guarantees no data/pricing/files ever mix between items.
     for (const item of items) {
-      // Every item gets its own unique ID, so its file/specs are traceable
       const quoteId = crypto.randomUUID();
       const itemWithId = { ...item, quoteId };
 
@@ -226,8 +221,19 @@ app.post('/api/quote', async (req, res) => {
   }
 });
 
-// Start the server on port 3000 (you can change this if needed)
-const PORT = 3000;
+// Catches any error we didn't handle explicitly above,
+// and always responds with JSON (never an HTML crash page)
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({
+    message: 'Something went wrong on the server.',
+    error: err.message
+  });
+});
+
+// Start the server. Render assigns its own PORT via environment variable —
+// process.env.PORT is used when available, falling back to 3000 locally.
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
