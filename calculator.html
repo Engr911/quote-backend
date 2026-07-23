@@ -126,9 +126,8 @@
 </div>
 
 <script>
-  // Change this to your live backend URL once deployed.
-  // For now, it points to your local server.
-  const BACKEND_URL = 'http://localhost:3000';
+  // Points to your live, always-on backend on Render.
+  const BACKEND_URL = 'https://quote-backend-dzyn.onrender.com';
 
   const submitBtn = document.getElementById('submitBtn');
   const resultBox = document.getElementById('result');
@@ -149,7 +148,6 @@
 
       let fileUrl = null;
 
-      // Step 1: if a file was chosen, upload it first and get its URL
       if (fileInput.files.length > 0) {
         const formData = new FormData();
         formData.append('artwork', fileInput.files[0]);
@@ -168,7 +166,6 @@
         fileUrl = uploadResult.fileUrl;
       }
 
-      // Step 2: submit the quote (with the fileUrl attached, if any)
       const quoteResponse = await fetch(`${BACKEND_URL}/api/quote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
